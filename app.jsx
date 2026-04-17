@@ -3,7 +3,7 @@ const { useState, useEffect, useCallback, useMemo, useRef, useReducer } = React;
 // ─── Storage ───────────────────────────────────────────────────────────────────
 
 const STORAGE_KEY = 'hanzistudy_v1';
-const defaultData = { characters: [], wordLists: [] };
+const defaultData = { characters: [], wordLists: [], quizStats: {} };
 
 function loadData() {
   try {
@@ -52,7 +52,18 @@ function reducer(state, action) {
         })),
       };
     case 'IMPORT':
-      return action.data;
+      return { ...defaultData, ...action.data };
+    case 'UPDATE_QUIZ_STATS': {
+      const stats = { ...(state.quizStats || {}) };
+      action.results.forEach(({ charId, correct }) => {
+        const prev = stats[charId] || { correct: 0, incorrect: 0 };
+        stats[charId] = {
+          correct: prev.correct + (correct ? 1 : 0),
+          incorrect: prev.incorrect + (correct ? 0 : 1),
+        };
+      });
+      return { ...state, quizStats: stats };
+    }
     default:
       return state;
   }
@@ -143,6 +154,19 @@ const SunIcon = () => (
     <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
     <line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
     <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+  </svg>
+);
+const ArrowLeftIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
+    <line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/>
+  </svg>
+);
+const KeyboardIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+    <rect x="2" y="6" width="20" height="12" rx="2"/>
+    <line x1="6" y1="10" x2="6.01" y2="10"/><line x1="10" y1="10" x2="10.01" y2="10"/>
+    <line x1="14" y1="10" x2="14.01" y2="10"/><line x1="18" y1="10" x2="18.01" y2="10"/>
+    <line x1="8" y1="14" x2="16" y2="14"/>
   </svg>
 );
 
@@ -363,8 +387,7 @@ function BulkAddModal({ wordLists, onSave, onClose }) {
   return (
     <Modal title="Bulk Add" onClose={onClose} wide>
       <div className="space-y-4">
-        <Field label="Paste entries — one per line"
-          hint='Format: 字 | pīnyīn | meaning'>
+        <Field label="Paste entries — one per line" hint='Format: 字 | pīnyīn | meaning'>
           <textarea rows={8} value={text} onChange={e => setText(e.target.value)}
             placeholder={"好 | hǎo | good\n坏 | huài | bad\n你好 | nǐ hǎo | hello"}
             className={`${inputCls} font-mono text-sm resize-none`} />
@@ -481,7 +504,6 @@ function CharacterCard({ char, wordLists, allCharacters, onEdit, onDelete, confi
             char.character.length > 2 ? 'text-lg' : char.character.length > 1 ? 'text-2xl' : 'text-3xl'
           }`}>{char.character}</span>
         </div>
-
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-sm font-medium text-indigo-500 dark:text-indigo-400">{char.pinyin}</span>
@@ -498,7 +520,6 @@ function CharacterCard({ char, wordLists, allCharacters, onEdit, onDelete, confi
             </div>
           )}
         </div>
-
         <div className="flex items-center gap-0.5 ml-1 flex-shrink-0">
           <button onClick={e => { e.stopPropagation(); onEdit(char); }}
             className="p-2 text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-xl transition-colors">
@@ -687,7 +708,6 @@ function LibraryTab({ data, dispatch }) {
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      {/* Header */}
       <div className="flex-shrink-0 px-4 pt-4 pb-3 space-y-3">
         <div className="flex items-center justify-between">
           <div>
@@ -707,7 +727,6 @@ function LibraryTab({ data, dispatch }) {
           </div>
         </div>
 
-        {/* Search */}
         <div className="relative">
           <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
             <SearchIcon />
@@ -717,9 +736,8 @@ function LibraryTab({ data, dispatch }) {
             className="w-full pl-11 pr-4 py-2.5 bg-gray-100 dark:bg-gray-800 rounded-2xl text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-shadow" />
         </div>
 
-        {/* Filter chips */}
         <div className="flex items-center gap-2">
-          <div className="flex-1 flex items-center gap-2 overflow-x-auto pb-0.5 no-scrollbar">
+          <div className="flex-1 flex items-center gap-2 overflow-x-auto pb-0.5">
             {['all', ...wordLists.map(wl => wl.id)].map(id => {
               const label = id === 'all' ? 'All' : wordLists.find(wl => wl.id === id)?.name;
               const active = filterListId === id;
@@ -742,7 +760,6 @@ function LibraryTab({ data, dispatch }) {
         </div>
       </div>
 
-      {/* Word Lists Panel */}
       {showLists && (
         <WordListsPanel
           wordLists={wordLists}
@@ -753,7 +770,6 @@ function LibraryTab({ data, dispatch }) {
         />
       )}
 
-      {/* Character list */}
       <div className="flex-1 overflow-y-auto px-4 pb-2">
         {sorted.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center py-12">
@@ -788,14 +804,12 @@ function LibraryTab({ data, dispatch }) {
         )}
       </div>
 
-      {/* Delete toast */}
       {deleteConfirm && (
-        <div className="absolute bottom-28 left-1/2 -translate-x-1/2 bg-red-600 text-white text-sm px-4 py-2 rounded-full shadow-lg z-40 pointer-events-none animate-pulse">
+        <div className="absolute bottom-28 left-1/2 -translate-x-1/2 bg-red-600 text-white text-sm px-4 py-2 rounded-full shadow-lg z-40 pointer-events-none">
           Tap delete again to confirm
         </div>
       )}
 
-      {/* Bottom action bar */}
       <div className="flex-shrink-0 px-4 py-3 flex gap-3 border-t border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-950">
         <button onClick={() => setShowBulkModal(true)}
           className="flex-1 px-4 py-3 border-2 border-dashed border-gray-300 dark:border-gray-600 text-sm font-medium text-gray-500 dark:text-gray-400 rounded-2xl hover:border-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">
@@ -807,7 +821,6 @@ function LibraryTab({ data, dispatch }) {
         </button>
       </div>
 
-      {/* Modals */}
       {(showAddModal || editingChar) && (
         <CharacterModal
           initial={editingChar}
@@ -828,6 +841,697 @@ function LibraryTab({ data, dispatch }) {
         />
       )}
     </div>
+  );
+}
+
+// ─── Quiz Utilities ────────────────────────────────────────────────────────────
+
+function normalizePinyin(s) {
+  return s.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function formatTime(ms) {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function getWrongOptions(questionChar, allChars, count) {
+  const qListIds = questionChar.wordListIds || [];
+  let pool = qListIds.length > 0
+    ? allChars.filter(c => c.id !== questionChar.id && !c.wordListIds.some(id => qListIds.includes(id)))
+    : allChars.filter(c => c.id !== questionChar.id);
+  if (pool.length < count) pool = allChars.filter(c => c.id !== questionChar.id);
+  return shuffle(pool).slice(0, count);
+}
+
+function buildQuizQuestions(pool, allChars, mode, count = 10) {
+  const questions = shuffle(pool).slice(0, count);
+  return questions.map(char => {
+    if (mode === 'pinyin') return { charId: char.id, char };
+    const wrongs = getWrongOptions(char, allChars, 3);
+    const isCharPick = mode === 'char-pick';
+    const correct = { id: char.id, display: isCharPick ? char.character : char.meaning, isCorrect: true };
+    const options = shuffle([
+      correct,
+      ...wrongs.map(c => ({ id: c.id, display: isCharPick ? c.character : c.meaning, isCorrect: false })),
+    ]);
+    return { charId: char.id, char, options };
+  });
+}
+
+// ─── Tone Helper ───────────────────────────────────────────────────────────────
+
+const TONE_ROWS = [
+  ['ā','á','ǎ','à','ē','é','ě','è'],
+  ['ī','í','ǐ','ì','ō','ó','ǒ','ò'],
+  ['ū','ú','ǔ','ù','ǖ','ǘ','ǚ','ǜ'],
+];
+
+const TONE_ROW_LABELS = ['a · e', 'i · o', 'u · ü'];
+
+function ToneHelper({ onInsert }) {
+  return (
+    <div className="bg-gray-50 dark:bg-gray-800/80 rounded-2xl p-3 border border-gray-100 dark:border-gray-700/60">
+      <div className="flex items-center gap-2 mb-2">
+        <KeyboardIcon />
+        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Tone marks</span>
+      </div>
+      <div className="space-y-1.5">
+        {TONE_ROWS.map((row, ri) => (
+          <div key={ri} className="flex items-center gap-1">
+            <span className="w-8 text-center text-xs text-gray-300 dark:text-gray-600 font-medium flex-shrink-0">
+              {TONE_ROW_LABELS[ri]}
+            </span>
+            <div className="flex-1 grid grid-cols-8 gap-1">
+              {row.map(char => (
+                <button
+                  key={char}
+                  type="button"
+                  onPointerDown={e => { e.preventDefault(); onInsert(char); }}
+                  className="py-2 bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-indigo-50 dark:hover:bg-indigo-900/40 hover:text-indigo-600 dark:hover:text-indigo-300 hover:border-indigo-300 active:scale-95 transition-all select-none">
+                  {char}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Quiz Progress Bar ─────────────────────────────────────────────────────────
+
+function QuizProgressBar({ current, total, onExit }) {
+  const pct = Math.round((current / total) * 100);
+  return (
+    <div className="flex-shrink-0 px-4 pt-4 pb-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <button onClick={onExit}
+          className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors">
+          <ArrowLeftIcon /> Exit
+        </button>
+        <span className="text-sm font-semibold text-gray-600 dark:text-gray-400">
+          {current} / {total}
+        </span>
+      </div>
+      <div className="h-2 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+        <div
+          className="h-full bg-indigo-600 rounded-full transition-all duration-500"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ─── Pinyin Session ────────────────────────────────────────────────────────────
+
+function PinyinSession({ question, questionIndex, total, onAnswer, onExit }) {
+  const [answer, setAnswer] = useState('');
+  const [phase, setPhase] = useState('input'); // 'input' | 'feedback'
+  const [correct, setCorrect] = useState(false);
+  const inputRef = useRef(null);
+  const cursorRef = useRef(null);
+  const timerRef = useRef(null);
+
+  useEffect(() => {
+    setAnswer('');
+    setPhase('input');
+    setCorrect(false);
+    clearTimeout(timerRef.current);
+    setTimeout(() => inputRef.current?.focus(), 80);
+  }, [question.charId]);
+
+  useEffect(() => {
+    return () => clearTimeout(timerRef.current);
+  }, []);
+
+  // Restore cursor after tone insertion
+  useEffect(() => {
+    if (cursorRef.current !== null && inputRef.current) {
+      inputRef.current.setSelectionRange(cursorRef.current, cursorRef.current);
+      cursorRef.current = null;
+    }
+  });
+
+  const insertTone = (char) => {
+    const input = inputRef.current;
+    const start = input ? (input.selectionStart ?? answer.length) : answer.length;
+    const end = input ? (input.selectionEnd ?? answer.length) : answer.length;
+    const newVal = answer.slice(0, start) + char + answer.slice(end);
+    cursorRef.current = start + 1;
+    setAnswer(newVal);
+    input?.focus();
+  };
+
+  const submit = () => {
+    if (!answer.trim() || phase !== 'input') return;
+    const isCorrect = normalizePinyin(answer) === normalizePinyin(question.char.pinyin);
+    setCorrect(isCorrect);
+    setPhase('feedback');
+    if (isCorrect) {
+      timerRef.current = setTimeout(() => advance(isCorrect, answer), 1200);
+    }
+  };
+
+  const advance = (isCorr = correct, ans = answer) => {
+    clearTimeout(timerRef.current);
+    onAnswer({ charId: question.charId, correct: isCorr, userAnswer: ans, correctAnswer: question.char.pinyin });
+  };
+
+  const charSize = question.char.character.length > 2 ? 'text-5xl' : question.char.character.length > 1 ? 'text-6xl' : 'text-8xl';
+
+  return (
+    <div className="flex flex-col h-full overflow-hidden">
+      <QuizProgressBar current={questionIndex + 1} total={total} onExit={onExit} />
+
+      <div className="flex-1 overflow-y-auto px-4 pb-4 flex flex-col gap-4">
+        {/* Character display */}
+        <div className="flex justify-center pt-2">
+          <div className={`w-40 h-40 rounded-3xl flex items-center justify-center transition-all duration-300 ${
+            phase === 'input'
+              ? 'bg-indigo-50 dark:bg-indigo-900/30'
+              : correct
+                ? 'bg-green-100 dark:bg-green-900/30'
+                : 'bg-red-100 dark:bg-red-900/30'
+          }`}>
+            <span className={`${charSize} font-bold leading-none text-center px-2 ${
+              phase === 'input'
+                ? 'text-indigo-700 dark:text-indigo-300'
+                : correct
+                  ? 'text-green-700 dark:text-green-300'
+                  : 'text-red-700 dark:text-red-300'
+            }`}>
+              {question.char.character}
+            </span>
+          </div>
+        </div>
+
+        {/* Input area */}
+        <div className="space-y-2">
+          <p className="text-xs text-center text-gray-400 font-medium uppercase tracking-wide">Type the pīnyīn</p>
+          <input
+            ref={inputRef}
+            type="text"
+            value={answer}
+            onChange={e => phase === 'input' && setAnswer(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && submit()}
+            readOnly={phase === 'feedback'}
+            placeholder="pīnyīn..."
+            className={`w-full px-4 py-3.5 text-center text-xl rounded-2xl border-2 outline-none transition-all ${
+              phase === 'input'
+                ? 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 focus:border-indigo-400 dark:focus:border-indigo-500 text-gray-900 dark:text-gray-100'
+                : correct
+                  ? 'border-green-500 bg-green-50 dark:bg-green-900/20 text-green-800 dark:text-green-200'
+                  : 'border-red-500 bg-red-50 dark:bg-red-900/20 text-red-800 dark:text-red-200 line-through'
+            }`}
+          />
+
+          {/* Feedback message */}
+          {phase === 'feedback' && (
+            <div className={`text-center py-3 px-4 rounded-2xl ${
+              correct ? 'bg-green-50 dark:bg-green-900/20' : 'bg-red-50 dark:bg-red-900/20'
+            }`}>
+              {correct ? (
+                <p className="text-green-700 dark:text-green-300 font-semibold">Correct!</p>
+              ) : (
+                <>
+                  <p className="text-red-600 dark:text-red-400 text-sm mb-1">Correct answer:</p>
+                  <p className="text-xl font-bold text-gray-900 dark:text-gray-100">{question.char.pinyin}</p>
+                  <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">{question.char.meaning}</p>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Tone helper */}
+        {phase === 'input' && <ToneHelper onInsert={insertTone} />}
+
+        {/* Action button */}
+        <div className="pb-2">
+          {phase === 'input' ? (
+            <button
+              onClick={submit}
+              disabled={!answer.trim()}
+              className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-2xl font-semibold text-lg shadow-lg shadow-indigo-600/25 transition-colors">
+              Submit
+            </button>
+          ) : (
+            <button
+              onClick={() => advance()}
+              className={`w-full py-4 text-white rounded-2xl font-semibold text-lg shadow-lg transition-colors ${
+                correct
+                  ? 'bg-green-600 hover:bg-green-700 shadow-green-600/25'
+                  : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-600/25'
+              }`}>
+              {questionIndex + 1 < total ? 'Next →' : 'See Results'}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Recognition Session ───────────────────────────────────────────────────────
+
+function RecognitionSession({ question, questionIndex, total, mode, onAnswer, onExit }) {
+  const [selected, setSelected] = useState(null); // option object
+  const timerRef = useRef(null);
+
+  useEffect(() => {
+    setSelected(null);
+    clearTimeout(timerRef.current);
+  }, [question.charId]);
+
+  useEffect(() => () => clearTimeout(timerRef.current), []);
+
+  const handleSelect = (option) => {
+    if (selected) return;
+    setSelected(option);
+    if (option.isCorrect) {
+      timerRef.current = setTimeout(() => advance(option), 1100);
+    }
+  };
+
+  const advance = (opt = selected) => {
+    clearTimeout(timerRef.current);
+    const correctOpt = question.options.find(o => o.isCorrect);
+    onAnswer({
+      charId: question.charId,
+      correct: opt?.isCorrect ?? false,
+      userAnswer: opt?.display ?? '',
+      correctAnswer: correctOpt?.display ?? '',
+    });
+  };
+
+  const isCharPick = mode === 'char-pick';
+  const charSize = question.char.character.length > 2 ? 'text-3xl' : question.char.character.length > 1 ? 'text-4xl' : 'text-6xl';
+
+  const optionStyle = (opt) => {
+    if (!selected) return 'bg-white dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100 hover:border-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 hover:text-indigo-700 dark:hover:text-indigo-300 active:scale-95';
+    if (opt.isCorrect) return 'bg-green-500 border-2 border-green-500 text-white';
+    if (opt.id === selected.id) return 'bg-red-500 border-2 border-red-500 text-white';
+    return 'bg-gray-100 dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700 text-gray-400 dark:text-gray-600 opacity-50';
+  };
+
+  return (
+    <div className="flex flex-col h-full overflow-hidden">
+      <QuizProgressBar current={questionIndex + 1} total={total} onExit={onExit} />
+
+      <div className="flex-1 overflow-y-auto px-4 pb-4 flex flex-col gap-5">
+        {/* Prompt */}
+        <div className="flex flex-col items-center text-center pt-3 pb-1">
+          {isCharPick ? (
+            // Show pinyin + meaning → pick character
+            <div className="space-y-1">
+              <p className="text-3xl font-bold text-indigo-600 dark:text-indigo-400">{question.char.pinyin}</p>
+              <p className="text-lg text-gray-600 dark:text-gray-400">{question.char.meaning}</p>
+              <p className="text-xs text-gray-400 mt-2 uppercase tracking-wide font-medium">Which character?</p>
+            </div>
+          ) : (
+            // Show character → pick meaning
+            <div className="space-y-2">
+              <div className="w-36 h-36 rounded-3xl bg-indigo-50 dark:bg-indigo-900/30 flex items-center justify-center mx-auto">
+                <span className={`${charSize} font-bold text-indigo-700 dark:text-indigo-300 leading-none`}>
+                  {question.char.character}
+                </span>
+              </div>
+              <p className="text-xs text-gray-400 uppercase tracking-wide font-medium">What does this mean?</p>
+            </div>
+          )}
+        </div>
+
+        {/* Options */}
+        <div className={`grid gap-3 ${isCharPick ? 'grid-cols-2' : 'grid-cols-1'}`}>
+          {question.options.map(opt => (
+            <button
+              key={opt.id}
+              onClick={() => handleSelect(opt)}
+              disabled={!!selected}
+              className={`rounded-2xl py-4 px-4 font-semibold transition-all duration-200 ${
+                isCharPick ? 'text-3xl' : 'text-base text-left leading-snug'
+              } ${optionStyle(opt)}`}>
+              {isCharPick ? (
+                opt.display
+              ) : (
+                <span className="block">{opt.display}</span>
+              )}
+            </button>
+          ))}
+        </div>
+
+        {/* Feedback + Next */}
+        {selected && (
+          <div className="pb-2">
+            {!selected.isCorrect && (
+              <div className="mb-3 text-center py-3 px-4 bg-green-50 dark:bg-green-900/20 rounded-2xl">
+                <p className="text-xs text-gray-400 mb-1 uppercase tracking-wide font-medium">Correct answer</p>
+                <p className={`font-bold text-green-700 dark:text-green-300 ${isCharPick ? 'text-3xl' : 'text-base'}`}>
+                  {question.options.find(o => o.isCorrect)?.display}
+                </p>
+              </div>
+            )}
+            <button
+              onClick={() => advance()}
+              className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-semibold text-lg shadow-lg shadow-indigo-600/25 transition-colors">
+              {questionIndex + 1 < total ? 'Next →' : 'See Results'}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Quiz Summary ──────────────────────────────────────────────────────────────
+
+function QuizSummary({ results, elapsed, mode, onRetry, onSetup }) {
+  const correct = results.filter(r => r.correct).length;
+  const total = results.length;
+  const pct = Math.round((correct / total) * 100);
+  const missed = results.filter(r => !r.correct);
+
+  const scoreColor = pct >= 80 ? 'text-green-600 dark:text-green-400'
+    : pct >= 50 ? 'text-amber-600 dark:text-amber-400'
+    : 'text-red-600 dark:text-red-400';
+
+  const ringColor = pct >= 80 ? 'stroke-green-500' : pct >= 50 ? 'stroke-amber-500' : 'stroke-red-500';
+  const circumference = 2 * Math.PI * 40;
+  const dashOffset = circumference - (pct / 100) * circumference;
+
+  return (
+    <div className="flex flex-col h-full overflow-hidden">
+      <div className="flex-shrink-0 flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-gray-800">
+        <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">Session Complete</h2>
+        <button onClick={onSetup}
+          className="text-sm text-indigo-600 dark:text-indigo-400 hover:underline font-medium">
+          Change Mode
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-5 py-5 space-y-6">
+        {/* Score ring */}
+        <div className="flex flex-col items-center gap-3">
+          <div className="relative w-28 h-28">
+            <svg className="w-28 h-28 -rotate-90" viewBox="0 0 100 100">
+              <circle cx="50" cy="50" r="40" fill="none" stroke="currentColor"
+                className="text-gray-100 dark:text-gray-800" strokeWidth="10" />
+              <circle cx="50" cy="50" r="40" fill="none" strokeWidth="10"
+                className={ringColor}
+                strokeLinecap="round"
+                strokeDasharray={circumference}
+                strokeDashoffset={dashOffset}
+                style={{ transition: 'stroke-dashoffset 0.6s ease' }}
+              />
+            </svg>
+            <div className="absolute inset-0 flex flex-col items-center justify-center">
+              <span className={`text-3xl font-extrabold leading-none ${scoreColor}`}>{correct}</span>
+              <span className="text-xs text-gray-400 font-medium">of {total}</span>
+            </div>
+          </div>
+
+          <div className="text-center">
+            <p className={`text-2xl font-bold ${scoreColor}`}>{pct}%</p>
+            <p className="text-sm text-gray-400 mt-0.5 flex items-center justify-center gap-1">
+              <span>⏱</span> {formatTime(elapsed)}
+              <span className="mx-1">·</span>
+              <span>{mode === 'pinyin' ? 'Pīnyīn Quiz' : mode === 'char-pick' ? 'Char Recognition' : 'Meaning Recognition'}</span>
+            </p>
+          </div>
+        </div>
+
+        {/* Quick stats row */}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="bg-green-50 dark:bg-green-900/20 rounded-2xl p-3 text-center">
+            <p className="text-2xl font-bold text-green-700 dark:text-green-400">{correct}</p>
+            <p className="text-xs text-green-600 dark:text-green-500 font-medium mt-0.5">Correct</p>
+          </div>
+          <div className="bg-red-50 dark:bg-red-900/20 rounded-2xl p-3 text-center">
+            <p className="text-2xl font-bold text-red-700 dark:text-red-400">{total - correct}</p>
+            <p className="text-xs text-red-600 dark:text-red-500 font-medium mt-0.5">Missed</p>
+          </div>
+        </div>
+
+        {/* Missed items */}
+        {missed.length > 0 && (
+          <div>
+            <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
+              Review these ({missed.length}):
+            </p>
+            <div className="space-y-2">
+              {missed.map((r, i) => (
+                <div key={i} className="flex items-start gap-3 px-4 py-3 bg-red-50 dark:bg-red-900/10 border border-red-100 dark:border-red-900/30 rounded-2xl">
+                  <span className="text-2xl font-bold text-indigo-700 dark:text-indigo-300 flex-shrink-0 w-10 text-center leading-tight">
+                    {r.char.character}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-sm font-medium text-indigo-500">{r.char.pinyin}</span>
+                      <span className="text-xs text-gray-400">·</span>
+                      <span className="text-sm text-gray-600 dark:text-gray-400">{r.char.meaning}</span>
+                    </div>
+                    {r.userAnswer && (
+                      <div className="mt-1 flex items-center gap-2 text-xs">
+                        <span className="text-red-500 line-through">{r.userAnswer}</span>
+                        <span className="text-gray-400">→</span>
+                        <span className="text-green-600 dark:text-green-400 font-medium">{r.correctAnswer}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {missed.length === 0 && (
+          <div className="text-center py-4">
+            <span className="text-4xl">🎉</span>
+            <p className="text-green-700 dark:text-green-400 font-semibold mt-2">Perfect score!</p>
+          </div>
+        )}
+      </div>
+
+      {/* Bottom buttons */}
+      <div className="flex-shrink-0 px-5 py-4 border-t border-gray-100 dark:border-gray-800 flex gap-3">
+        <button onClick={onSetup}
+          className="flex-1 py-3.5 border border-gray-200 dark:border-gray-700 rounded-2xl text-gray-700 dark:text-gray-300 font-medium hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
+          Change Mode
+        </button>
+        <button onClick={onRetry}
+          className="flex-1 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-semibold shadow-lg shadow-indigo-600/25 transition-colors">
+          Quiz Again
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Quiz Setup ────────────────────────────────────────────────────────────────
+
+function QuizSetup({ data, onStart }) {
+  const { characters, wordLists } = data;
+  const [mode, setMode] = useState('pinyin'); // 'pinyin' | 'char-pick' | 'meaning-pick'
+  const [filterListId, setFilterListId] = useState('all');
+
+  const pool = useMemo(() => (
+    filterListId === 'all' ? characters : characters.filter(c => c.wordListIds.includes(filterListId))
+  ), [characters, filterListId]);
+
+  const questionCount = Math.min(10, pool.length);
+  const needsRecognition = mode !== 'pinyin' && characters.length < 4;
+  const canStart = pool.length >= 1 && !needsRecognition;
+
+  const modeBtn = (id, label, sub) => (
+    <button
+      key={id}
+      onClick={() => setMode(id)}
+      className={`flex-1 px-3 py-3 rounded-2xl border-2 text-left transition-all ${
+        mode === id
+          ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/30'
+          : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+      }`}>
+      <p className={`text-sm font-semibold ${mode === id ? 'text-indigo-700 dark:text-indigo-300' : 'text-gray-800 dark:text-gray-200'}`}>{label}</p>
+      {sub && <p className="text-xs text-gray-400 mt-0.5 leading-snug">{sub}</p>}
+    </button>
+  );
+
+  return (
+    <div className="flex flex-col h-full overflow-hidden">
+      <div className="flex-shrink-0 px-5 pt-5 pb-3">
+        <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">Quiz</h1>
+        <p className="text-sm text-gray-400 mt-0.5">{characters.length} characters in library</p>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-5 pb-5 space-y-6">
+        {/* Mode selection */}
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3">Quiz Mode</p>
+
+          <div className="space-y-3">
+            {/* Pinyin mode */}
+            <div className="flex gap-2">
+              {modeBtn('pinyin', 'Pīnyīn Quiz', 'See a character — type its pīnyīn with tones')}
+            </div>
+
+            {/* Recognition modes */}
+            <div className="flex gap-2">
+              {modeBtn('char-pick', 'Char Recognition', 'See pīnyīn + meaning — pick the character')}
+              {modeBtn('meaning-pick', 'Meaning Recognition', 'See a character — pick the English meaning')}
+            </div>
+          </div>
+
+          {needsRecognition && (
+            <p className="mt-3 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 rounded-xl">
+              Recognition quiz needs at least 4 characters in your library to generate wrong options.
+            </p>
+          )}
+        </div>
+
+        {/* Word list filter */}
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3">Quiz From</p>
+          <div className="flex flex-wrap gap-2">
+            {[{ id: 'all', name: 'All characters' }, ...wordLists].map(item => (
+              <button
+                key={item.id}
+                onClick={() => setFilterListId(item.id)}
+                className={`px-3.5 py-2 rounded-full text-sm font-medium transition-colors ${
+                  filterListId === item.id
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
+                }`}>
+                {item.name}
+                {item.id !== 'all' && (
+                  <span className={`ml-1.5 text-xs ${filterListId === item.id ? 'text-indigo-200' : 'text-gray-400'}`}>
+                    {characters.filter(c => c.wordListIds.includes(item.id)).length}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+
+          {pool.length === 0 && (
+            <p className="mt-3 text-sm text-gray-400">No characters in this list. Go to Library to add some.</p>
+          )}
+        </div>
+
+        {/* Session info */}
+        {pool.length > 0 && (
+          <div className="bg-indigo-50 dark:bg-indigo-900/20 rounded-2xl px-4 py-3">
+            <p className="text-sm text-indigo-700 dark:text-indigo-300">
+              <span className="font-bold">{questionCount}</span>{' '}
+              {questionCount === 1 ? 'question' : 'questions'}
+              {pool.length > 10 && ` · randomly drawn from ${pool.length}`}
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Start button */}
+      <div className="flex-shrink-0 px-5 py-4 border-t border-gray-100 dark:border-gray-800">
+        <button
+          onClick={() => canStart && onStart(mode, filterListId, pool)}
+          disabled={!canStart}
+          className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-2xl font-bold text-lg shadow-lg shadow-indigo-600/25 transition-colors">
+          Start Quiz →
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Quiz Tab ──────────────────────────────────────────────────────────────────
+
+function QuizTab({ data, dispatch }) {
+  // phase: 'setup' | 'running' | 'summary'
+  const [phase, setPhase] = useState('setup');
+  const [session, setSession] = useState(null);
+  // session: { mode, questions, currentIndex, results, startTime, filterListId }
+
+  const startSession = (mode, filterListId, pool) => {
+    const questions = buildQuizQuestions(pool, data.characters, mode, 10);
+    setSession({ mode, questions, currentIndex: 0, results: [], startTime: Date.now(), filterListId });
+    setPhase('running');
+  };
+
+  const handleAnswer = (result) => {
+    const char = session.questions[session.currentIndex].char;
+    const enriched = { ...result, char };
+    const newResults = [...session.results, enriched];
+    const nextIndex = session.currentIndex + 1;
+
+    if (nextIndex >= session.questions.length) {
+      // Save stats
+      dispatch({ type: 'UPDATE_QUIZ_STATS', results: newResults });
+      setSession(s => ({ ...s, results: newResults }));
+      setPhase('summary');
+    } else {
+      setSession(s => ({ ...s, currentIndex: nextIndex, results: newResults }));
+    }
+  };
+
+  const handleRetry = () => {
+    const pool = session.filterListId === 'all'
+      ? data.characters
+      : data.characters.filter(c => c.wordListIds.includes(session.filterListId));
+    startSession(session.mode, session.filterListId, pool);
+  };
+
+  if (phase === 'setup' || !session) {
+    return <QuizSetup data={data} onStart={startSession} />;
+  }
+
+  if (phase === 'summary') {
+    return (
+      <QuizSummary
+        results={session.results}
+        elapsed={Date.now() - session.startTime}
+        mode={session.mode}
+        onRetry={handleRetry}
+        onSetup={() => setPhase('setup')}
+      />
+    );
+  }
+
+  // Running
+  const question = session.questions[session.currentIndex];
+  if (session.mode === 'pinyin') {
+    return (
+      <PinyinSession
+        key={`${session.startTime}-${session.currentIndex}`}
+        question={question}
+        questionIndex={session.currentIndex}
+        total={session.questions.length}
+        onAnswer={handleAnswer}
+        onExit={() => setPhase('setup')}
+      />
+    );
+  }
+
+  return (
+    <RecognitionSession
+      key={`${session.startTime}-${session.currentIndex}`}
+      question={question}
+      questionIndex={session.currentIndex}
+      total={session.questions.length}
+      mode={session.mode}
+      onAnswer={handleAnswer}
+      onExit={() => setPhase('setup')}
+    />
   );
 }
 
@@ -892,7 +1596,6 @@ function App() {
 
   return (
     <div className="flex flex-col h-full max-w-lg mx-auto bg-gray-50 dark:bg-gray-950 relative">
-      {/* App bar */}
       <header className="flex-shrink-0 flex items-center justify-between px-5 py-3 bg-white dark:bg-gray-900 border-b border-gray-100 dark:border-gray-800">
         <span className="text-xl font-extrabold tracking-tight text-indigo-600 dark:text-indigo-400">汉字 Study</span>
         <button onClick={() => setDarkMode(d => !d)}
@@ -901,10 +1604,9 @@ function App() {
         </button>
       </header>
 
-      {/* Content */}
       <div className="flex-1 overflow-hidden flex flex-col">
         {activeTab === 'library'  && <LibraryTab data={data} dispatch={dispatch} />}
-        {activeTab === 'quiz'     && <PlaceholderTab emoji="🃏" name="Quiz" blurb="Flashcard-style quizzes to test your recall — choose a word list and go." />}
+        {activeTab === 'quiz'     && <QuizTab data={data} dispatch={dispatch} />}
         {activeTab === 'practice' && <PlaceholderTab emoji="✏️" name="Practice" blurb="Stroke-order practice and writing drills to build muscle memory." />}
         {activeTab === 'stats'    && <PlaceholderTab emoji="📊" name="Stats" blurb="Track your daily study streak, quiz accuracy, and progress over time." />}
       </div>
