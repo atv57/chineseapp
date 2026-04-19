@@ -3,7 +3,7 @@ const { useState, useEffect, useCallback, useMemo, useRef, useReducer } = React;
 // ─── Storage ───────────────────────────────────────────────────────────────────
 
 const STORAGE_KEY = 'hanzistudy_v1';
-const defaultData = { characters: [], wordLists: [], quizStats: {}, practiceStats: {} };
+const defaultData = { characters: [], wordLists: [], quizStats: {}, practiceStats: {}, srsData: {} };
 
 function loadData() {
   try {
@@ -74,6 +74,25 @@ function reducer(state, action) {
             count: prev.count + 1,
             totalMistakes: prev.totalMistakes + action.mistakes,
             lastPracticed: Date.now(),
+          },
+        },
+      };
+    }
+    case 'UPDATE_SRS': {
+      // action.charId, action.correct
+      const SRS_INTERVALS_MS = [0, 1, 3, 7, 14, 30].map(d => d * 86400000);
+      const now = Date.now();
+      const cur = (state.srsData || {})[action.charId] || { box: 1, nextReview: 0, totalReviews: 0 };
+      const newBox = action.correct ? Math.min(5, (cur.box || 1) + 1) : 1;
+      return {
+        ...state,
+        srsData: {
+          ...(state.srsData || {}),
+          [action.charId]: {
+            box: newBox,
+            nextReview: now + SRS_INTERVALS_MS[newBox],
+            lastReviewed: now,
+            totalReviews: (cur.totalReviews || 0) + 1,
           },
         },
       };
@@ -501,7 +520,7 @@ function WordListModal({ initial, onSave, onClose }) {
 
 // ─── Character Card ────────────────────────────────────────────────────────────
 
-function CharacterCard({ char, wordLists, allCharacters, onEdit, onDelete, confirmId, practiced }) {
+function CharacterCard({ char, wordLists, allCharacters, onEdit, onDelete, confirmId, practiced, box, due }) {
   const [expanded, setExpanded] = useState(false);
   const lists = wordLists.filter(wl => char.wordListIds.includes(wl.id));
   const components = allCharacters.filter(c => (char.componentIds ?? []).includes(c.id));
@@ -513,15 +532,24 @@ function CharacterCard({ char, wordLists, allCharacters, onEdit, onDelete, confi
     }`}>
       <div className="flex items-center gap-3 px-4 py-3 cursor-pointer select-none"
         onClick={() => setExpanded(e => !e)}>
-        <div className="flex-shrink-0 w-14 h-14 relative flex items-center justify-center bg-indigo-50 dark:bg-indigo-900/40 rounded-2xl">
-          <span className={`font-bold text-indigo-700 dark:text-indigo-300 leading-none ${
+        <div className={`flex-shrink-0 w-14 h-14 relative flex items-center justify-center rounded-2xl transition-colors ${
+          due ? 'bg-amber-50 dark:bg-amber-900/30 ring-2 ring-amber-300 dark:ring-amber-700' : 'bg-indigo-50 dark:bg-indigo-900/40'
+        }`}>
+          <span className={`font-bold leading-none ${
             char.character.length > 2 ? 'text-lg' : char.character.length > 1 ? 'text-2xl' : 'text-3xl'
-          }`}>{char.character}</span>
+          } ${due ? 'text-amber-700 dark:text-amber-300' : 'text-indigo-700 dark:text-indigo-300'}`}>
+            {char.character}
+          </span>
           {practiced && (
             <span className="absolute -top-1 -right-1 w-4 h-4 bg-green-500 rounded-full flex items-center justify-center shadow-sm">
               <svg viewBox="0 0 10 10" fill="none" stroke="white" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-2.5 h-2.5">
                 <polyline points="1.5 5 3.5 7.5 8.5 2.5"/>
               </svg>
+            </span>
+          )}
+          {box && (
+            <span className={`absolute -bottom-1 -left-1 w-4 h-4 rounded-full flex items-center justify-center text-white shadow-sm text-[9px] font-bold ${BOX_STYLE[box]?.ring ?? 'bg-gray-400'}`}>
+              {box}
             </span>
           )}
         </div>
@@ -633,7 +661,7 @@ function WordListsPanel({ wordLists, characters, onNew, onRename, onDelete }) {
 // ─── Library Tab ───────────────────────────────────────────────────────────────
 
 function LibraryTab({ data, dispatch }) {
-  const { characters, wordLists, practiceStats } = data;
+  const { characters, wordLists, practiceStats, srsData } = data;
   const [search, setSearch] = useState('');
   const [filterListId, setFilterListId] = useState('all');
   const [showAddModal, setShowAddModal] = useState(false);
@@ -820,6 +848,8 @@ function LibraryTab({ data, dispatch }) {
                 onDelete={handleDeleteChar}
                 confirmId={deleteConfirm}
                 practiced={!!(practiceStats?.[char.id]?.count > 0)}
+                box={srsData?.[char.id]?.box ?? null}
+                due={isDue(srsData?.[char.id])}
               />
             ))}
           </div>
@@ -908,6 +938,44 @@ function buildQuizQuestions(pool, allChars, mode, count = 10) {
       ...wrongs.map(c => ({ id: c.id, display: isCharPick ? c.character : c.meaning, isCorrect: false })),
     ]);
     return { charId: char.id, char, options };
+  });
+}
+
+// ─── SRS (Leitner) Utilities ──────────────────────────────────────────────────
+
+// Review intervals in days per box (index = box number 1-5)
+const SRS_INTERVALS = [0, 1, 3, 7, 14, 30];
+
+const BOX_STYLE = {
+  1: { ring: 'bg-red-500',     text: 'text-red-600 dark:text-red-400',     label: 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300' },
+  2: { ring: 'bg-orange-500',  text: 'text-orange-600 dark:text-orange-400', label: 'bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300' },
+  3: { ring: 'bg-amber-400',   text: 'text-amber-600 dark:text-amber-400',  label: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300' },
+  4: { ring: 'bg-blue-500',    text: 'text-blue-600 dark:text-blue-400',    label: 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300' },
+  5: { ring: 'bg-emerald-500', text: 'text-emerald-600 dark:text-emerald-400', label: 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300' },
+};
+
+function isDue(srsEntry) {
+  if (!srsEntry) return true; // new characters are always due
+  return srsEntry.nextReview <= Date.now();
+}
+
+function getDueCharacters(characters, srsData) {
+  return characters.filter(c => isDue((srsData || {})[c.id]));
+}
+
+function buildSmartPool(characters, srsData) {
+  const now = Date.now();
+  const due = getDueCharacters(characters, srsData);
+  return [...due].sort((a, b) => {
+    const da = (srsData || {})[a.id];
+    const db = (srsData || {})[b.id];
+    const boxA = da?.box ?? 1;
+    const boxB = db?.box ?? 1;
+    // Lower box = higher priority; break ties by how overdue
+    if (boxA !== boxB) return boxA - boxB;
+    const overdueA = now - (da?.nextReview ?? now);
+    const overdueB = now - (db?.nextReview ?? now);
+    return overdueB - overdueA;
   });
 }
 
@@ -1365,22 +1433,41 @@ function QuizSummary({ results, elapsed, mode, onRetry, onSetup }) {
 // ─── Quiz Setup ────────────────────────────────────────────────────────────────
 
 function QuizSetup({ data, onStart }) {
-  const { characters, wordLists } = data;
-  const [mode, setMode] = useState('pinyin'); // 'pinyin' | 'char-pick' | 'meaning-pick'
+  const { characters, wordLists, srsData } = data;
+  const [mode, setMode] = useState('pinyin');
   const [filterListId, setFilterListId] = useState('all');
 
-  const pool = useMemo(() => (
-    filterListId === 'all' ? characters : characters.filter(c => c.wordListIds.includes(filterListId))
-  ), [characters, filterListId]);
+  const dueCount = useMemo(() => getDueCharacters(characters, srsData).length, [characters, srsData]);
+
+  const pool = useMemo(() => {
+    if (filterListId === 'smart') return buildSmartPool(characters, srsData);
+    if (filterListId === 'all') return characters;
+    return characters.filter(c => c.wordListIds.includes(filterListId));
+  }, [characters, srsData, filterListId]);
 
   const questionCount = Math.min(10, pool.length);
   const needsRecognition = mode !== 'pinyin' && characters.length < 4;
   const canStart = pool.length >= 1 && !needsRecognition;
 
+  const filterBtn = (id, label, count, accent) => {
+    const active = filterListId === id;
+    return (
+      <button key={id} onClick={() => setFilterListId(id)}
+        className={`flex-shrink-0 px-3.5 py-2 rounded-full text-sm font-medium transition-colors ${
+          active
+            ? accent ?? 'bg-indigo-600 text-white'
+            : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
+        }`}>
+        {label}
+        {count != null && (
+          <span className={`ml-1.5 text-xs ${active ? 'opacity-75' : 'text-gray-400'}`}>{count}</span>
+        )}
+      </button>
+    );
+  };
+
   const modeBtn = (id, label, sub) => (
-    <button
-      key={id}
-      onClick={() => setMode(id)}
+    <button key={id} onClick={() => setMode(id)}
       className={`flex-1 px-3 py-3 rounded-2xl border-2 text-left transition-all ${
         mode === id
           ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/30'
@@ -1398,58 +1485,82 @@ function QuizSetup({ data, onStart }) {
         <p className="text-sm text-gray-400 mt-0.5">{characters.length} characters in library</p>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-5 pb-5 space-y-6">
-        {/* Mode selection */}
+      <div className="flex-1 overflow-y-auto px-5 pb-5 space-y-5">
+        {/* Due-for-review banner */}
+        {dueCount > 0 && (
+          <button onClick={() => setFilterListId('smart')}
+            className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl border-2 text-left transition-all ${
+              filterListId === 'smart'
+                ? 'border-amber-400 bg-amber-50 dark:bg-amber-900/20'
+                : 'border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-900/10 hover:border-amber-400'
+            }`}>
+            <span className="text-2xl leading-none">🔔</span>
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
+                {dueCount} character{dueCount !== 1 ? 's' : ''} due for review
+              </p>
+              <p className="text-xs text-amber-600 dark:text-amber-500 mt-0.5">Tap to run a Smart Review session</p>
+            </div>
+            {filterListId === 'smart' && (
+              <span className="text-xs font-bold text-amber-700 dark:text-amber-400 bg-amber-200 dark:bg-amber-800 px-2 py-0.5 rounded-full">Selected</span>
+            )}
+          </button>
+        )}
+
+        {/* Quiz mode */}
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3">Quiz Mode</p>
-
-          <div className="space-y-3">
-            {/* Pinyin mode */}
+          <div className="space-y-2">
             <div className="flex gap-2">
               {modeBtn('pinyin', 'Pīnyīn Quiz', 'See a character — type its pīnyīn with tones')}
             </div>
-
-            {/* Recognition modes */}
             <div className="flex gap-2">
               {modeBtn('char-pick', 'Char Recognition', 'See pīnyīn + meaning — pick the character')}
               {modeBtn('meaning-pick', 'Meaning Recognition', 'See a character — pick the English meaning')}
             </div>
           </div>
-
           {needsRecognition && (
             <p className="mt-3 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 rounded-xl">
-              Recognition quiz needs at least 4 characters in your library to generate wrong options.
+              Recognition quiz needs at least 4 characters in your library.
             </p>
           )}
         </div>
 
-        {/* Word list filter */}
+        {/* Character source */}
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3">Quiz From</p>
           <div className="flex flex-wrap gap-2">
-            {[{ id: 'all', name: 'All characters' }, ...wordLists].map(item => (
-              <button
-                key={item.id}
-                onClick={() => setFilterListId(item.id)}
-                className={`px-3.5 py-2 rounded-full text-sm font-medium transition-colors ${
-                  filterListId === item.id
-                    ? 'bg-indigo-600 text-white'
-                    : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
-                }`}>
-                {item.name}
-                {item.id !== 'all' && (
-                  <span className={`ml-1.5 text-xs ${filterListId === item.id ? 'text-indigo-200' : 'text-gray-400'}`}>
-                    {characters.filter(c => c.wordListIds.includes(item.id)).length}
-                  </span>
-                )}
-              </button>
-            ))}
+            {dueCount > 0 && filterBtn('smart', '⭐ Smart Review', dueCount, 'bg-amber-500 text-white')}
+            {filterBtn('all', 'All characters')}
+            {wordLists.map(wl =>
+              filterBtn(wl.id, wl.name, characters.filter(c => c.wordListIds.includes(wl.id)).length)
+            )}
           </div>
-
           {pool.length === 0 && (
-            <p className="mt-3 text-sm text-gray-400">No characters in this list. Go to Library to add some.</p>
+            <p className="mt-3 text-sm text-gray-400">
+              {filterListId === 'smart' ? 'No characters due — great work!' : 'No characters here. Go to Library to add some.'}
+            </p>
           )}
         </div>
+
+        {/* Leitner box legend (when Smart Review selected) */}
+        {filterListId === 'smart' && pool.length > 0 && (
+          <div className="bg-gray-50 dark:bg-gray-800/60 rounded-2xl p-4 border border-gray-100 dark:border-gray-700">
+            <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-3 uppercase tracking-wide">Leitner Boxes</p>
+            <div className="grid grid-cols-5 gap-1.5 text-center">
+              {[1,2,3,4,5].map(b => {
+                const count = characters.filter(c => ((data.srsData || {})[c.id]?.box ?? 1) === b).length;
+                return (
+                  <div key={b} className={`rounded-xl py-2 px-1 ${BOX_STYLE[b].label}`}>
+                    <div className="text-lg font-bold leading-none">{count}</div>
+                    <div className="text-[10px] mt-1 font-medium opacity-80">Box {b}</div>
+                    <div className="text-[9px] opacity-60">{SRS_INTERVALS[b]}d</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Session info */}
         {pool.length > 0 && (
@@ -1457,19 +1568,19 @@ function QuizSetup({ data, onStart }) {
             <p className="text-sm text-indigo-700 dark:text-indigo-300">
               <span className="font-bold">{questionCount}</span>{' '}
               {questionCount === 1 ? 'question' : 'questions'}
-              {pool.length > 10 && ` · randomly drawn from ${pool.length}`}
+              {pool.length > 10 && ` · drawn from ${pool.length} ${filterListId === 'smart' ? 'due' : ''} characters`}
             </p>
           </div>
         )}
       </div>
 
-      {/* Start button */}
+      {/* Start */}
       <div className="flex-shrink-0 px-5 py-4 border-t border-gray-100 dark:border-gray-800">
         <button
           onClick={() => canStart && onStart(mode, filterListId, pool)}
           disabled={!canStart}
           className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-2xl font-bold text-lg shadow-lg shadow-indigo-600/25 transition-colors">
-          Start Quiz →
+          {filterListId === 'smart' ? '⭐ Start Smart Review →' : 'Start Quiz →'}
         </button>
       </div>
     </div>
@@ -1491,13 +1602,13 @@ function QuizTab({ data, dispatch }) {
   };
 
   const handleAnswer = (result) => {
+    dispatch({ type: 'UPDATE_SRS', charId: result.charId, correct: result.correct });
     const char = session.questions[session.currentIndex].char;
     const enriched = { ...result, char };
     const newResults = [...session.results, enriched];
     const nextIndex = session.currentIndex + 1;
 
     if (nextIndex >= session.questions.length) {
-      // Save stats
       dispatch({ type: 'UPDATE_QUIZ_STATS', results: newResults });
       setSession(s => ({ ...s, results: newResults }));
       setPhase('summary');
@@ -1507,9 +1618,10 @@ function QuizTab({ data, dispatch }) {
   };
 
   const handleRetry = () => {
-    const pool = session.filterListId === 'all'
-      ? data.characters
-      : data.characters.filter(c => c.wordListIds.includes(session.filterListId));
+    let pool;
+    if (session.filterListId === 'smart') pool = buildSmartPool(data.characters, data.srsData);
+    else if (session.filterListId === 'all') pool = data.characters;
+    else pool = data.characters.filter(c => c.wordListIds.includes(session.filterListId));
     startSession(session.mode, session.filterListId, pool);
   };
 
