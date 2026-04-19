@@ -3,7 +3,7 @@ const { useState, useEffect, useCallback, useMemo, useRef, useReducer } = React;
 // ─── Storage ───────────────────────────────────────────────────────────────────
 
 const STORAGE_KEY = 'hanzistudy_v1';
-const defaultData = { characters: [], wordLists: [], quizStats: {}, practiceStats: {}, srsData: {} };
+const defaultData = { characters: [], wordLists: [], quizStats: {}, practiceStats: {}, srsData: {}, studyLog: {} };
 
 function loadData() {
   try {
@@ -19,6 +19,10 @@ function saveData(data) {
 
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+
+function dateKey(d) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
 
 // ─── Reducer ───────────────────────────────────────────────────────────────────
@@ -66,6 +70,7 @@ function reducer(state, action) {
     }
     case 'UPDATE_PRACTICE_STATS': {
       const prev = (state.practiceStats || {})[action.charId] || { count: 0, totalMistakes: 0 };
+      const todayP = dateKey(new Date());
       return {
         ...state,
         practiceStats: {
@@ -76,14 +81,15 @@ function reducer(state, action) {
             lastPracticed: Date.now(),
           },
         },
+        studyLog: { ...(state.studyLog || {}), [todayP]: ((state.studyLog || {})[todayP] || 0) + 1 },
       };
     }
     case 'UPDATE_SRS': {
-      // action.charId, action.correct
       const SRS_INTERVALS_MS = [0, 1, 3, 7, 14, 30].map(d => d * 86400000);
       const now = Date.now();
       const cur = (state.srsData || {})[action.charId] || { box: 1, nextReview: 0, totalReviews: 0 };
       const newBox = action.correct ? Math.min(5, (cur.box || 1) + 1) : 1;
+      const todayS = dateKey(new Date());
       return {
         ...state,
         srsData: {
@@ -95,6 +101,7 @@ function reducer(state, action) {
             totalReviews: (cur.totalReviews || 0) + 1,
           },
         },
+        studyLog: { ...(state.studyLog || {}), [todayS]: ((state.studyLog || {})[todayS] || 0) + 1 },
       };
     }
     default:
@@ -971,12 +978,20 @@ function buildSmartPool(characters, srsData) {
     const db = (srsData || {})[b.id];
     const boxA = da?.box ?? 1;
     const boxB = db?.box ?? 1;
-    // Lower box = higher priority; break ties by how overdue
     if (boxA !== boxB) return boxA - boxB;
     const overdueA = now - (da?.nextReview ?? now);
     const overdueB = now - (db?.nextReview ?? now);
     return overdueB - overdueA;
   });
+}
+
+function calcStreak(studyLog) {
+  const log = studyLog || {};
+  let d = new Date();
+  if (!log[dateKey(d)]) d = new Date(d.getTime() - 86400000);
+  let streak = 0;
+  while (log[dateKey(d)]) { streak++; d = new Date(d.getTime() - 86400000); }
+  return streak;
 }
 
 // ─── Tone Helper ───────────────────────────────────────────────────────────────
@@ -1019,6 +1034,10 @@ function ToneHelper({ onInsert }) {
     </div>
   );
 }
+
+// ─── Quiz Feedback Helpers ────────────────────────────────────────────────────
+
+const CORRECT_EMOJIS = ['🎉','✨','🌟','💪','🔥','⭐','🎯','👏'];
 
 // ─── Quiz Progress Bar ─────────────────────────────────────────────────────────
 
@@ -1109,7 +1128,9 @@ function PinyinSession({ question, questionIndex, total, onAnswer, onExit }) {
       <div className="flex-1 overflow-y-auto px-4 pb-4 flex flex-col gap-4">
         {/* Character display */}
         <div className="flex justify-center pt-2">
-          <div className={`w-40 h-40 rounded-3xl flex items-center justify-center transition-all duration-300 ${
+          <div
+            style={phase === 'feedback' && correct ? { animation: 'pop 0.45s ease' } : undefined}
+            className={`w-40 h-40 rounded-3xl flex items-center justify-center transition-all duration-300 ${
             phase === 'input'
               ? 'bg-indigo-50 dark:bg-indigo-900/30'
               : correct
@@ -1154,7 +1175,13 @@ function PinyinSession({ question, questionIndex, total, onAnswer, onExit }) {
               correct ? 'bg-green-50 dark:bg-green-900/20' : 'bg-red-50 dark:bg-red-900/20'
             }`}>
               {correct ? (
-                <p className="text-green-700 dark:text-green-300 font-semibold">Correct!</p>
+                <>
+                  <div style={{ display: 'inline-block', animation: 'pop 0.5s cubic-bezier(0.36,0.07,0.19,0.97)' }}
+                    className="text-4xl mb-1 leading-none">
+                    {CORRECT_EMOJIS[questionIndex % CORRECT_EMOJIS.length]}
+                  </div>
+                  <p className="text-green-700 dark:text-green-300 font-bold text-lg">Correct!</p>
+                </>
               ) : (
                 <>
                   <p className="text-red-600 dark:text-red-400 text-sm mb-1">Correct answer:</p>
@@ -1232,7 +1259,7 @@ function RecognitionSession({ question, questionIndex, total, mode, onAnswer, on
 
   const optionStyle = (opt) => {
     if (!selected) return 'bg-white dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100 hover:border-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 hover:text-indigo-700 dark:hover:text-indigo-300 active:scale-95';
-    if (opt.isCorrect) return 'bg-green-500 border-2 border-green-500 text-white';
+    if (opt.isCorrect) return 'bg-green-500 border-2 border-green-500 text-white scale-105 shadow-lg shadow-green-500/30';
     if (opt.id === selected.id) return 'bg-red-500 border-2 border-red-500 text-white';
     return 'bg-gray-100 dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700 text-gray-400 dark:text-gray-600 opacity-50';
   };
@@ -1285,8 +1312,16 @@ function RecognitionSession({ question, questionIndex, total, mode, onAnswer, on
 
         {/* Feedback + Next */}
         {selected && (
-          <div className="pb-2">
-            {!selected.isCorrect && (
+          <div className="pb-2" style={{ animation: 'slide-up 0.25s ease' }}>
+            {selected.isCorrect ? (
+              <div className="mb-3 text-center py-2">
+                <div style={{ display: 'inline-block', animation: 'pop 0.5s cubic-bezier(0.36,0.07,0.19,0.97)' }}
+                  className="text-4xl leading-none">
+                  {CORRECT_EMOJIS[questionIndex % CORRECT_EMOJIS.length]}
+                </div>
+                <p className="text-green-600 dark:text-green-400 font-bold mt-1">Correct!</p>
+              </div>
+            ) : (
               <div className="mb-3 text-center py-3 px-4 bg-green-50 dark:bg-green-900/20 rounded-2xl">
                 <p className="text-xs text-gray-400 mb-1 uppercase tracking-wide font-medium">Correct answer</p>
                 <p className={`font-bold text-green-700 dark:text-green-300 ${isCharPick ? 'text-3xl' : 'text-base'}`}>
@@ -1306,6 +1341,34 @@ function RecognitionSession({ question, questionIndex, total, mode, onAnswer, on
   );
 }
 
+// ─── Confetti Burst ────────────────────────────────────────────────────────────
+
+function ConfettiBurst() {
+  const pieces = useMemo(() => {
+    const colors = ['bg-indigo-400','bg-emerald-400','bg-amber-400','bg-pink-400','bg-purple-400','bg-cyan-400','bg-red-400','bg-yellow-400'];
+    return Array.from({ length: 32 }, (_, i) => ({
+      color: colors[i % colors.length],
+      left: `${Math.round((i / 32) * 100)}%`,
+      delay: `${(i * 0.045).toFixed(2)}s`,
+      duration: `${(1.1 + (i % 6) * 0.18).toFixed(2)}s`,
+      size: `${7 + (i % 5)}px`,
+      isCircle: i % 3 !== 0,
+    }));
+  }, []);
+
+  return (
+    <div className="fixed inset-0 pointer-events-none z-40 overflow-hidden">
+      {pieces.map((p, i) => (
+        <div key={i}
+          className={`absolute top-0 ${p.color} ${p.isCircle ? 'rounded-full' : 'rounded-sm'}`}
+          style={{ left: p.left, width: p.size, height: p.size,
+            animation: `confetti-fall ${p.duration} ${p.delay} ease-in forwards` }}
+        />
+      ))}
+    </div>
+  );
+}
+
 // ─── Quiz Summary ──────────────────────────────────────────────────────────────
 
 function QuizSummary({ results, elapsed, mode, onRetry, onSetup }) {
@@ -1313,38 +1376,55 @@ function QuizSummary({ results, elapsed, mode, onRetry, onSetup }) {
   const total = results.length;
   const pct = Math.round((correct / total) * 100);
   const missed = results.filter(r => !r.correct);
+  const isPerfect = pct === 100;
 
-  const scoreColor = pct >= 80 ? 'text-green-600 dark:text-green-400'
+  const scoreColor = isPerfect ? 'text-amber-500 dark:text-amber-400'
+    : pct >= 80 ? 'text-green-600 dark:text-green-400'
     : pct >= 50 ? 'text-amber-600 dark:text-amber-400'
     : 'text-red-600 dark:text-red-400';
 
-  const ringColor = pct >= 80 ? 'stroke-green-500' : pct >= 50 ? 'stroke-amber-500' : 'stroke-red-500';
+  const ringColor = isPerfect ? 'stroke-amber-400'
+    : pct >= 80 ? 'stroke-green-500'
+    : pct >= 50 ? 'stroke-amber-500'
+    : 'stroke-red-500';
+
+  const encouragement = isPerfect
+    ? { emoji: '🏆', text: 'Perfect score!', color: 'text-amber-600 dark:text-amber-400' }
+    : pct >= 80
+    ? { emoji: '🌟', text: 'Great work!', color: 'text-green-600 dark:text-green-400' }
+    : pct >= 60
+    ? { emoji: '💪', text: 'Good effort — keep going!', color: 'text-indigo-600 dark:text-indigo-400' }
+    : { emoji: '📚', text: 'Keep at it — practice makes perfect!', color: 'text-gray-600 dark:text-gray-400' };
+
   const circumference = 2 * Math.PI * 40;
   const dashOffset = circumference - (pct / 100) * circumference;
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      <div className="flex-shrink-0 flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-gray-800">
-        <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">Session Complete</h2>
-        <button onClick={onSetup}
-          className="text-sm text-indigo-600 dark:text-indigo-400 hover:underline font-medium">
+      {isPerfect && <ConfettiBurst />}
+
+      <div className={`flex-shrink-0 flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-gray-800 ${
+        isPerfect ? 'bg-gradient-to-r from-amber-50 to-yellow-50 dark:from-amber-900/20 dark:to-yellow-900/10' : ''
+      }`}>
+        <h2 className={`text-lg font-bold ${isPerfect ? 'text-amber-700 dark:text-amber-300' : 'text-gray-900 dark:text-gray-100'}`}>
+          {isPerfect ? '🏆 Perfect Score!' : 'Session Complete'}
+        </h2>
+        <button onClick={onSetup} className="text-sm text-indigo-600 dark:text-indigo-400 hover:underline font-medium">
           Change Mode
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-5 py-5 space-y-6">
-        {/* Score ring */}
+      <div className="flex-1 overflow-y-auto px-5 py-5 space-y-5">
+        {/* Score ring + encouragement */}
         <div className="flex flex-col items-center gap-3">
           <div className="relative w-28 h-28">
             <svg className="w-28 h-28 -rotate-90" viewBox="0 0 100 100">
               <circle cx="50" cy="50" r="40" fill="none" stroke="currentColor"
                 className="text-gray-100 dark:text-gray-800" strokeWidth="10" />
               <circle cx="50" cy="50" r="40" fill="none" strokeWidth="10"
-                className={ringColor}
-                strokeLinecap="round"
-                strokeDasharray={circumference}
-                strokeDashoffset={dashOffset}
-                style={{ transition: 'stroke-dashoffset 0.6s ease' }}
+                className={ringColor} strokeLinecap="round"
+                strokeDasharray={circumference} strokeDashoffset={dashOffset}
+                style={{ transition: 'stroke-dashoffset 0.7s ease' }}
               />
             </svg>
             <div className="absolute inset-0 flex flex-col items-center justify-center">
@@ -1354,24 +1434,32 @@ function QuizSummary({ results, elapsed, mode, onRetry, onSetup }) {
           </div>
 
           <div className="text-center">
-            <p className={`text-2xl font-bold ${scoreColor}`}>{pct}%</p>
-            <p className="text-sm text-gray-400 mt-0.5 flex items-center justify-center gap-1">
+            <div style={{ display: 'inline-block', animation: 'pop 0.55s ease' }} className="text-4xl leading-none mb-1">
+              {encouragement.emoji}
+            </div>
+            <p className={`text-2xl font-extrabold ${scoreColor}`}>{pct}%</p>
+            <p className={`text-sm font-semibold mt-0.5 ${encouragement.color}`}>{encouragement.text}</p>
+            <p className="text-xs text-gray-400 mt-1 flex items-center justify-center gap-1">
               <span>⏱</span> {formatTime(elapsed)}
               <span className="mx-1">·</span>
-              <span>{mode === 'pinyin' ? 'Pīnyīn Quiz' : mode === 'char-pick' ? 'Char Recognition' : 'Meaning Recognition'}</span>
+              <span>{mode === 'pinyin' ? 'Pīnyīn' : mode === 'char-pick' ? 'Char Recognition' : 'Meaning'}</span>
             </p>
           </div>
         </div>
 
-        {/* Quick stats row */}
+        {/* Quick stats */}
         <div className="grid grid-cols-2 gap-3">
           <div className="bg-green-50 dark:bg-green-900/20 rounded-2xl p-3 text-center">
             <p className="text-2xl font-bold text-green-700 dark:text-green-400">{correct}</p>
-            <p className="text-xs text-green-600 dark:text-green-500 font-medium mt-0.5">Correct</p>
+            <p className="text-xs text-green-600 dark:text-green-500 font-medium mt-0.5">Correct ✓</p>
           </div>
-          <div className="bg-red-50 dark:bg-red-900/20 rounded-2xl p-3 text-center">
-            <p className="text-2xl font-bold text-red-700 dark:text-red-400">{total - correct}</p>
-            <p className="text-xs text-red-600 dark:text-red-500 font-medium mt-0.5">Missed</p>
+          <div className={`${total - correct === 0 ? 'bg-emerald-50 dark:bg-emerald-900/20' : 'bg-red-50 dark:bg-red-900/20'} rounded-2xl p-3 text-center`}>
+            <p className={`text-2xl font-bold ${total - correct === 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'}`}>
+              {total - correct}
+            </p>
+            <p className={`text-xs font-medium mt-0.5 ${total - correct === 0 ? 'text-emerald-600 dark:text-emerald-500' : 'text-red-600 dark:text-red-500'}`}>
+              {total - correct === 0 ? 'None missed 🎉' : 'Missed ✗'}
+            </p>
           </div>
         </div>
 
@@ -1406,16 +1494,8 @@ function QuizSummary({ results, elapsed, mode, onRetry, onSetup }) {
             </div>
           </div>
         )}
-
-        {missed.length === 0 && (
-          <div className="text-center py-4">
-            <span className="text-4xl">🎉</span>
-            <p className="text-green-700 dark:text-green-400 font-semibold mt-2">Perfect score!</p>
-          </div>
-        )}
       </div>
 
-      {/* Bottom buttons */}
       <div className="flex-shrink-0 px-5 py-4 border-t border-gray-100 dark:border-gray-800 flex gap-3">
         <button onClick={onSetup}
           className="flex-1 py-3.5 border border-gray-200 dark:border-gray-700 rounded-2xl text-gray-700 dark:text-gray-300 font-medium hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
@@ -1423,7 +1503,7 @@ function QuizSummary({ results, elapsed, mode, onRetry, onSetup }) {
         </button>
         <button onClick={onRetry}
           className="flex-1 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-semibold shadow-lg shadow-indigo-600/25 transition-colors">
-          Quiz Again
+          Quiz Again →
         </button>
       </div>
     </div>
@@ -2004,6 +2084,231 @@ function PracticeTab({ data, dispatch, darkMode }) {
   return <PracticePicker data={data} onPractice={setSession} />;
 }
 
+// ─── Stats Tab ─────────────────────────────────────────────────────────────────
+
+function StatCard({ value, label, sub, colorClass, emoji }) {
+  return (
+    <div className={`rounded-2xl p-4 ${colorClass}`}>
+      <div className="text-2xl leading-none mb-2">{emoji}</div>
+      <div className="text-3xl font-extrabold leading-none">{value}</div>
+      <div className="text-sm font-semibold mt-1.5">{label}</div>
+      <div className="text-xs opacity-70 mt-0.5">{sub}</div>
+    </div>
+  );
+}
+
+function SectionHeader({ title, emoji }) {
+  return (
+    <div className="flex items-center gap-2 mb-3">
+      {emoji && <span className="text-base leading-none">{emoji}</span>}
+      <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">{title}</h3>
+    </div>
+  );
+}
+
+function StudyHeatmap({ studyLog }) {
+  const log = studyLog || {};
+  const today = new Date();
+  const todayStr = dateKey(today);
+  const days = Array.from({ length: 35 }, (_, i) => {
+    const d = new Date(today.getTime() - (34 - i) * 86400000);
+    const key = dateKey(d);
+    return { key, count: log[key] || 0, label: d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) };
+  });
+  const maxCount = Math.max(...days.map(d => d.count), 1);
+  const cellColor = (count, isToday) => {
+    const base = isToday ? 'ring-2 ring-indigo-500 dark:ring-indigo-400 ' : '';
+    if (!count) return base + 'bg-gray-100 dark:bg-gray-800';
+    const f = count / maxCount;
+    if (f < 0.25) return base + 'bg-indigo-200 dark:bg-indigo-900';
+    if (f < 0.6)  return base + 'bg-indigo-400 dark:bg-indigo-700';
+    return base + 'bg-indigo-600 dark:bg-indigo-500';
+  };
+  const DAY_LABELS = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+  return (
+    <div>
+      <div className="flex gap-1 mb-1.5">
+        {DAY_LABELS.map(l => (
+          <div key={l} className="flex-1 text-center text-[9px] text-gray-400 font-medium">{l}</div>
+        ))}
+      </div>
+      <div className="space-y-1">
+        {Array.from({ length: 5 }, (_, row) => (
+          <div key={row} className="flex gap-1">
+            {days.slice(row * 7, row * 7 + 7).map((day, col) => (
+              <div key={col}
+                title={`${day.label}: ${day.count} review${day.count !== 1 ? 's' : ''}`}
+                className={`flex-1 rounded-md transition-colors ${cellColor(day.count, day.key === todayStr)}`}
+                style={{ height: '22px' }}
+              />
+            ))}
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center justify-end gap-1.5 mt-2.5">
+        <span className="text-[10px] text-gray-400">Less</span>
+        {['bg-gray-100 dark:bg-gray-800','bg-indigo-200 dark:bg-indigo-900','bg-indigo-400 dark:bg-indigo-700','bg-indigo-600 dark:bg-indigo-500'].map((c, i) => (
+          <div key={i} className={`w-3 h-3 rounded-sm ${c}`} />
+        ))}
+        <span className="text-[10px] text-gray-400">More</span>
+      </div>
+    </div>
+  );
+}
+
+function StatsTab({ data }) {
+  const { characters, srsData, quizStats, studyLog } = data;
+  const total = characters.length;
+
+  if (total === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-center px-8">
+        <span className="text-7xl mb-4 select-none">📊</span>
+        <h2 className="text-xl font-bold text-gray-700 dark:text-gray-300 mb-2">No data yet</h2>
+        <p className="text-gray-400 text-sm leading-relaxed">Add characters to your library and start quizzing to see your progress here.</p>
+      </div>
+    );
+  }
+
+  const mastered = characters.filter(c => (srsData?.[c.id]?.box ?? 1) >= 4).length;
+  const masteryPct = total > 0 ? Math.round((mastered / total) * 100) : 0;
+  const streak = calcStreak(studyLog);
+  const dueCount = getDueCharacters(characters, srsData).length;
+
+  const boxCounts = [1,2,3,4,5].map(b => ({
+    box: b,
+    count: characters.filter(c => (srsData?.[c.id]?.box ?? 1) === b).length,
+  }));
+
+  const reviewedChars = characters.filter(c =>
+    (srsData?.[c.id]?.totalReviews ?? 0) > 0 || (quizStats?.[c.id]?.incorrect ?? 0) > 0
+  );
+  const weakest = [...reviewedChars]
+    .sort((a, b) => {
+      const boxA = srsData?.[a.id]?.box ?? 1;
+      const boxB = srsData?.[b.id]?.box ?? 1;
+      if (boxA !== boxB) return boxA - boxB;
+      return (quizStats?.[b.id]?.incorrect ?? 0) - (quizStats?.[a.id]?.incorrect ?? 0);
+    })
+    .slice(0, 6);
+
+  const totalReviews = Object.values(studyLog || {}).reduce((s, n) => s + n, 0);
+
+  return (
+    <div className="flex flex-col h-full overflow-hidden">
+      <div className="flex-shrink-0 px-5 pt-5 pb-3">
+        <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">Stats</h1>
+        <p className="text-sm text-gray-400 mt-0.5">{totalReviews} total reviews</p>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-4 pb-6 space-y-6">
+        {/* Overview cards */}
+        <div className="grid grid-cols-2 gap-3">
+          <StatCard
+            value={total} label="Characters" sub="in library"
+            colorClass="bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300"
+            emoji="字"
+          />
+          <StatCard
+            value={`${masteryPct}%`} label="Mastered" sub={`${mastered} of ${total} in box 4–5`}
+            colorClass="bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300"
+            emoji="🏆"
+          />
+          <StatCard
+            value={streak} label={`Day streak`} sub={streak > 0 ? 'Keep studying daily!' : 'Study today to start!'}
+            colorClass={streak >= 3
+              ? 'bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300'
+              : 'bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-400'}
+            emoji={streak >= 7 ? '🔥' : streak >= 3 ? '⚡' : streak > 0 ? '✨' : '💤'}
+          />
+          <StatCard
+            value={dueCount} label="Due today" sub="characters for review"
+            colorClass={dueCount > 0
+              ? 'bg-rose-50 dark:bg-rose-900/30 text-rose-700 dark:text-rose-300'
+              : 'bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300'}
+            emoji={dueCount > 0 ? '🔔' : '✅'}
+          />
+        </div>
+
+        {/* Mastery progress */}
+        <div>
+          <SectionHeader title="Mastery Progress" emoji="📈" />
+          <div className="space-y-3">
+            <div className="flex items-center gap-3">
+              <div className="flex-1 h-3 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-indigo-500 to-emerald-500 rounded-full transition-all duration-700"
+                  style={{ width: `${masteryPct}%` }}
+                />
+              </div>
+              <span className="text-sm font-bold text-gray-700 dark:text-gray-300 w-10 text-right">{masteryPct}%</span>
+            </div>
+            <div className="grid grid-cols-5 gap-1.5 text-center">
+              {boxCounts.map(({ box, count }) => (
+                <div key={box} className={`rounded-xl py-2.5 ${BOX_STYLE[box].label}`}>
+                  <div className="text-lg font-extrabold leading-none">{count}</div>
+                  <div className="text-[10px] font-semibold mt-1 opacity-80">Box {box}</div>
+                  <div className="text-[9px] opacity-60">{SRS_INTERVALS[box]}d</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Weakest characters */}
+        <div>
+          <SectionHeader title="Needs Practice" emoji="💪" />
+          {weakest.length === 0 ? (
+            <p className="text-sm text-gray-400 py-2 text-center">Take some quizzes to see which characters need the most work.</p>
+          ) : (
+            <div className="space-y-2">
+              {weakest.map(c => {
+                const box = srsData?.[c.id]?.box ?? 1;
+                const incorrect = quizStats?.[c.id]?.incorrect ?? 0;
+                const correct = quizStats?.[c.id]?.correct ?? 0;
+                const totalQ = correct + incorrect;
+                const accuracy = totalQ > 0 ? Math.round((correct / totalQ) * 100) : null;
+                return (
+                  <div key={c.id} className="flex items-center gap-3 px-4 py-3 bg-white dark:bg-gray-800 rounded-2xl border border-gray-100 dark:border-gray-700">
+                    <span className="text-2xl font-bold text-indigo-700 dark:text-indigo-300 w-10 text-center leading-none flex-shrink-0">{c.character}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-sm font-medium text-indigo-500">{c.pinyin}</span>
+                        <span className={`text-[10px] px-1.5 py-px rounded-full font-bold ${BOX_STYLE[box].label}`}>B{box}</span>
+                      </div>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 truncate">{c.meaning}</p>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      {accuracy !== null ? (
+                        <>
+                          <p className={`text-sm font-bold ${accuracy < 50 ? 'text-red-600 dark:text-red-400' : accuracy < 80 ? 'text-amber-600 dark:text-amber-400' : 'text-green-600 dark:text-green-400'}`}>
+                            {accuracy}%
+                          </p>
+                          <p className="text-[10px] text-gray-400">{totalQ} tries</p>
+                        </>
+                      ) : (
+                        <p className="text-xs text-gray-400">new</p>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Study heatmap */}
+        <div>
+          <SectionHeader title="Study Activity (last 5 weeks)" emoji="📅" />
+          <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-100 dark:border-gray-700 p-4">
+            <StudyHeatmap studyLog={studyLog} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Placeholder Tabs ──────────────────────────────────────────────────────────
 
 function PlaceholderTab({ emoji, name, blurb }) {
@@ -2077,7 +2382,7 @@ function App() {
         {activeTab === 'library'  && <LibraryTab data={data} dispatch={dispatch} />}
         {activeTab === 'quiz'     && <QuizTab data={data} dispatch={dispatch} />}
         {activeTab === 'practice' && <PracticeTab data={data} dispatch={dispatch} darkMode={darkMode} />}
-        {activeTab === 'stats'    && <PlaceholderTab emoji="📊" name="Stats" blurb="Track your daily study streak, quiz accuracy, and progress over time." />}
+        {activeTab === 'stats'    && <StatsTab data={data} />}
       </div>
 
       <BottomNav active={activeTab} onChange={setActiveTab} />
