@@ -3,7 +3,7 @@ const { useState, useEffect, useCallback, useMemo, useRef, useReducer } = React;
 // ─── Storage ───────────────────────────────────────────────────────────────────
 
 const STORAGE_KEY = 'hanzistudy_v1';
-const defaultData = { characters: [], wordLists: [], quizStats: {} };
+const defaultData = { characters: [], wordLists: [], quizStats: {}, practiceStats: {} };
 
 function loadData() {
   try {
@@ -63,6 +63,20 @@ function reducer(state, action) {
         };
       });
       return { ...state, quizStats: stats };
+    }
+    case 'UPDATE_PRACTICE_STATS': {
+      const prev = (state.practiceStats || {})[action.charId] || { count: 0, totalMistakes: 0 };
+      return {
+        ...state,
+        practiceStats: {
+          ...(state.practiceStats || {}),
+          [action.charId]: {
+            count: prev.count + 1,
+            totalMistakes: prev.totalMistakes + action.mistakes,
+            lastPracticed: Date.now(),
+          },
+        },
+      };
     }
     default:
       return state;
@@ -487,7 +501,7 @@ function WordListModal({ initial, onSave, onClose }) {
 
 // ─── Character Card ────────────────────────────────────────────────────────────
 
-function CharacterCard({ char, wordLists, allCharacters, onEdit, onDelete, confirmId }) {
+function CharacterCard({ char, wordLists, allCharacters, onEdit, onDelete, confirmId, practiced }) {
   const [expanded, setExpanded] = useState(false);
   const lists = wordLists.filter(wl => char.wordListIds.includes(wl.id));
   const components = allCharacters.filter(c => (char.componentIds ?? []).includes(c.id));
@@ -499,10 +513,17 @@ function CharacterCard({ char, wordLists, allCharacters, onEdit, onDelete, confi
     }`}>
       <div className="flex items-center gap-3 px-4 py-3 cursor-pointer select-none"
         onClick={() => setExpanded(e => !e)}>
-        <div className="flex-shrink-0 w-14 h-14 flex items-center justify-center bg-indigo-50 dark:bg-indigo-900/40 rounded-2xl">
+        <div className="flex-shrink-0 w-14 h-14 relative flex items-center justify-center bg-indigo-50 dark:bg-indigo-900/40 rounded-2xl">
           <span className={`font-bold text-indigo-700 dark:text-indigo-300 leading-none ${
             char.character.length > 2 ? 'text-lg' : char.character.length > 1 ? 'text-2xl' : 'text-3xl'
           }`}>{char.character}</span>
+          {practiced && (
+            <span className="absolute -top-1 -right-1 w-4 h-4 bg-green-500 rounded-full flex items-center justify-center shadow-sm">
+              <svg viewBox="0 0 10 10" fill="none" stroke="white" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-2.5 h-2.5">
+                <polyline points="1.5 5 3.5 7.5 8.5 2.5"/>
+              </svg>
+            </span>
+          )}
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 flex-wrap">
@@ -612,7 +633,7 @@ function WordListsPanel({ wordLists, characters, onNew, onRename, onDelete }) {
 // ─── Library Tab ───────────────────────────────────────────────────────────────
 
 function LibraryTab({ data, dispatch }) {
-  const { characters, wordLists } = data;
+  const { characters, wordLists, practiceStats } = data;
   const [search, setSearch] = useState('');
   const [filterListId, setFilterListId] = useState('all');
   const [showAddModal, setShowAddModal] = useState(false);
@@ -798,6 +819,7 @@ function LibraryTab({ data, dispatch }) {
                 onEdit={setEditingChar}
                 onDelete={handleDeleteChar}
                 confirmId={deleteConfirm}
+                practiced={!!(practiceStats?.[char.id]?.count > 0)}
               />
             ))}
           </div>
@@ -1535,6 +1557,341 @@ function QuizTab({ data, dispatch }) {
   );
 }
 
+// ─── Practice Tab ─────────────────────────────────────────────────────────────
+
+function useHanziWriter(character, darkMode) {
+  const containerRef = useRef(null);
+  const writerRef = useRef(null);
+  const [status, setStatus] = useState('loading'); // loading|ready|animating|quiz|done|error
+  const [mistakes, setMistakes] = useState(0);
+  const [strokesDone, setStrokesDone] = useState(0);
+  const [strokesTotal, setStrokesTotal] = useState(0);
+  const onCompleteRef = useRef(null);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    el.innerHTML = '';
+    setStatus('loading');
+    setMistakes(0);
+    setStrokesDone(0);
+    setStrokesTotal(0);
+
+    if (typeof HanziWriter === 'undefined') { setStatus('error'); return; }
+
+    const writer = HanziWriter.create(el, character, {
+      width: 280, height: 280, padding: 12,
+      showCharacter: true, showOutline: true,
+      showHintAfterMisses: 3, highlightOnComplete: true,
+      strokeColor: darkMode ? '#a5b4fc' : '#4338ca',
+      outlineColor: darkMode ? '#4b5563' : '#d1d5db',
+      drawingColor: '#f59e0b',
+      highlightColor: '#10b981',
+      drawingWidth: 4,
+      onLoadCharDataSuccess: () => setStatus('ready'),
+      onLoadCharDataError: () => setStatus('error'),
+    });
+    writerRef.current = writer;
+    return () => { if (el) el.innerHTML = ''; };
+  }, [character, darkMode]);
+
+  const animate = useCallback(() => {
+    const w = writerRef.current;
+    if (!w || !['ready', 'done'].includes(status)) return;
+    setStatus('animating');
+    w.animateCharacter({ onComplete: () => setStatus('ready') });
+  }, [status]);
+
+  const startQuiz = useCallback((onComplete) => {
+    const w = writerRef.current;
+    if (!w || status === 'loading' || status === 'error') return;
+    try { w.cancelQuiz(); } catch {}
+    onCompleteRef.current = onComplete;
+    setStatus('quiz');
+    setMistakes(0);
+    setStrokesDone(0);
+    setStrokesTotal(0);
+    w.quiz({
+      onMistake: () => setMistakes(m => m + 1),
+      onCorrectStroke: (d) => { setStrokesDone(d.strokesCompleted); setStrokesTotal(d.totalStrokeCount); },
+      onComplete: (summary) => { setStatus('done'); onCompleteRef.current?.(summary.totalMistakes); },
+    });
+  }, [status]);
+
+  const reset = useCallback(() => {
+    const w = writerRef.current;
+    if (!w) return;
+    try { w.cancelQuiz(); } catch {}
+    try { w.showCharacter(); } catch {}
+    setStatus('ready');
+    setMistakes(0);
+    setStrokesDone(0);
+    setStrokesTotal(0);
+  }, []);
+
+  return { containerRef, status, mistakes, strokesDone, strokesTotal, animate, startQuiz, reset };
+}
+
+function HanziCanvas({ char, darkMode, onQuizComplete }) {
+  const { containerRef, status, mistakes, strokesDone, strokesTotal, animate, startQuiz, reset } =
+    useHanziWriter(char.character, darkMode);
+
+  const statusText = {
+    loading: null,
+    error: null,
+    ready: 'Tap Animate to preview stroke order, then Practice to trace.',
+    animating: 'Watching stroke order…',
+    quiz: strokesTotal > 0
+      ? `Stroke ${strokesDone + 1} of ${strokesTotal} · ${mistakes} mistake${mistakes !== 1 ? 's' : ''}`
+      : 'Trace each stroke in order…',
+    done: mistakes === 0 ? '🎉 Perfect!' : `Done — ${mistakes} mistake${mistakes !== 1 ? 's' : ''}`,
+  }[status];
+
+  return (
+    <div className="flex flex-col items-center gap-4 w-full">
+      {/* Canvas */}
+      <div className="relative rounded-3xl overflow-hidden border-2 border-gray-100 dark:border-gray-700 shadow-inner bg-white dark:bg-gray-800"
+        style={{ width: 280, height: 280 }}>
+        <div ref={containerRef} style={{ width: 280, height: 280 }} />
+        {status === 'loading' && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+            <div className="w-7 h-7 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+            <p className="text-xs text-gray-400">Loading stroke data…</p>
+          </div>
+        )}
+      </div>
+
+      {/* Error */}
+      {status === 'error' && (
+        <div className="w-full text-center px-4 py-3 bg-amber-50 dark:bg-amber-900/20 rounded-2xl border border-amber-200 dark:border-amber-700">
+          <p className="text-sm font-medium text-amber-700 dark:text-amber-400">No stroke data available</p>
+          <p className="text-xs text-amber-600 dark:text-amber-500 mt-0.5">HanziWriter doesn't have data for "{char.character}"</p>
+        </div>
+      )}
+
+      {/* Status line */}
+      {statusText && (
+        <p className={`text-sm text-center leading-snug ${
+          status === 'done' && mistakes === 0 ? 'text-green-600 dark:text-green-400 font-semibold' :
+          status === 'done' ? 'text-indigo-600 dark:text-indigo-400 font-medium' :
+          status === 'quiz' && mistakes > 0 ? 'text-amber-600 dark:text-amber-400' :
+          'text-gray-400 dark:text-gray-500'
+        }`}>{statusText}</p>
+      )}
+
+      {/* Controls */}
+      {!['loading', 'error'].includes(status) && (
+        <div className="flex gap-3 w-full">
+          <button
+            onClick={animate}
+            disabled={!['ready', 'done'].includes(status)}
+            className="flex-1 py-3 rounded-2xl border-2 border-indigo-200 dark:border-indigo-700 text-indigo-700 dark:text-indigo-300 font-medium text-sm disabled:opacity-30 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors">
+            ▶ Animate
+          </button>
+          {status === 'quiz' ? (
+            <button onClick={reset}
+              className="flex-1 py-3 rounded-2xl border-2 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 font-medium text-sm hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
+              ↺ Reset
+            </button>
+          ) : (
+            <button
+              onClick={() => startQuiz(onQuizComplete)}
+              disabled={status === 'animating' || status === 'loading'}
+              className="flex-1 py-3 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-sm disabled:opacity-30 shadow-lg shadow-indigo-600/25 transition-colors">
+              {status === 'done' ? '↺ Again' : '✏ Practice'}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PracticePicker({ data, onPractice }) {
+  const { characters, wordLists, practiceStats } = data;
+  const [filterListId, setFilterListId] = useState('all');
+
+  const singleChars = characters.filter(c => !c.isWord);
+  const visible = filterListId === 'all'
+    ? singleChars
+    : singleChars.filter(c => c.wordListIds.includes(filterListId));
+
+  const listName = wordLists.find(w => w.id === filterListId)?.name;
+
+  return (
+    <div className="flex flex-col h-full overflow-hidden">
+      <div className="flex-shrink-0 px-4 pt-4 pb-3 space-y-3">
+        <div>
+          <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">Practice</h1>
+          <p className="text-xs text-gray-400 mt-0.5">
+            Stroke-order tracing · {singleChars.length} character{singleChars.length !== 1 ? 's' : ''} available
+          </p>
+        </div>
+        <div className="flex items-center gap-2 overflow-x-auto pb-0.5">
+          {[{ id: 'all', name: 'All' }, ...wordLists].map(item => (
+            <button key={item.id} onClick={() => setFilterListId(item.id)}
+              className={`flex-shrink-0 px-3.5 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                filterListId === item.id
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
+              }`}>
+              {item.name}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {filterListId !== 'all' && visible.length > 0 && (
+        <div className="flex-shrink-0 px-4 mb-1">
+          <button onClick={() => onPractice(visible)}
+            className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-medium text-sm shadow-lg shadow-indigo-600/25 transition-colors">
+            Practice all {visible.length} in "{listName}" sequentially →
+          </button>
+        </div>
+      )}
+
+      <div className="flex-1 overflow-y-auto px-4 pb-4 pt-2">
+        {characters.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-48 text-center">
+            <span className="text-6xl mb-3 select-none">字</span>
+            <p className="text-gray-500 dark:text-gray-400 font-medium">No characters yet</p>
+            <p className="text-sm text-gray-400 mt-1">Add single characters in the Library tab</p>
+          </div>
+        ) : visible.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-40 text-center">
+            <p className="text-gray-400">No single characters in this list</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 gap-3">
+            {visible.map(char => {
+              const stats = practiceStats?.[char.id];
+              const practiced = !!(stats?.count > 0);
+              return (
+                <button key={char.id} onClick={() => onPractice([char])}
+                  className="relative flex flex-col items-center gap-1.5 p-3 bg-white dark:bg-gray-800 rounded-2xl border border-gray-100 dark:border-gray-700 hover:border-indigo-300 dark:hover:border-indigo-600 hover:shadow-md active:scale-95 transition-all">
+                  {practiced && (
+                    <span className="absolute top-1.5 right-1.5 w-4 h-4 bg-green-500 rounded-full flex items-center justify-center">
+                      <svg viewBox="0 0 10 10" fill="none" stroke="white" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" className="w-2.5 h-2.5">
+                        <polyline points="1.5 5 3.5 7.5 8.5 2.5"/>
+                      </svg>
+                    </span>
+                  )}
+                  <span className="text-3xl font-bold text-indigo-700 dark:text-indigo-300 leading-none pt-1">{char.character}</span>
+                  <span className="text-xs text-indigo-500 dark:text-indigo-400 font-medium truncate w-full text-center">{char.pinyin}</span>
+                  {practiced ? (
+                    <span className="text-xs text-green-600 dark:text-green-500 font-medium">{stats.count}×</span>
+                  ) : (
+                    <span className="text-xs text-gray-300 dark:text-gray-600">—</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PracticeSession({ chars, darkMode, practiceStats, dispatch, onBack }) {
+  const [index, setIndex] = useState(0);
+  const [quizDone, setQuizDone] = useState(false);
+  const isSequential = chars.length > 1;
+  const char = chars[index];
+  const isLast = index === chars.length - 1;
+  const charStats = practiceStats?.[char?.id];
+
+  useEffect(() => { setQuizDone(false); }, [index]);
+
+  const handleQuizComplete = (mistakes) => {
+    dispatch({ type: 'UPDATE_PRACTICE_STATS', charId: char.id, mistakes });
+    setQuizDone(true);
+  };
+
+  const goNext = () => {
+    if (isLast) { onBack(); return; }
+    setIndex(i => i + 1);
+  };
+
+  if (!char) return null;
+
+  return (
+    <div className="flex flex-col h-full overflow-hidden">
+      {/* Header */}
+      <div className="flex-shrink-0 flex items-center justify-between px-5 py-3 border-b border-gray-100 dark:border-gray-800">
+        <button onClick={onBack}
+          className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors">
+          <ArrowLeftIcon /> {isSequential ? 'Exit' : 'Back'}
+        </button>
+        <div className="text-center">
+          {isSequential ? (
+            <span className="text-sm font-semibold text-gray-500 dark:text-gray-400">{index + 1} / {chars.length}</span>
+          ) : charStats?.count > 0 ? (
+            <span className="text-xs text-gray-400">Practiced {charStats.count}×</span>
+          ) : null}
+        </div>
+        <div className="w-16" />
+      </div>
+
+      {/* Sequential progress bar */}
+      {isSequential && (
+        <div className="flex-shrink-0 px-5 pt-2.5 pb-0">
+          <div className="h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+            <div className="h-full bg-indigo-600 rounded-full transition-all duration-500"
+              style={{ width: `${(index / chars.length) * 100}%` }} />
+          </div>
+        </div>
+      )}
+
+      <div className="flex-1 overflow-y-auto px-5 py-5 flex flex-col items-center gap-5">
+        {/* Character info */}
+        <div className="text-center">
+          <div className="text-5xl font-bold text-gray-900 dark:text-gray-100 mb-1 leading-none">{char.character}</div>
+          <div className="text-lg font-medium text-indigo-600 dark:text-indigo-400">{char.pinyin}</div>
+          <div className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">{char.meaning}</div>
+        </div>
+
+        {/* Canvas */}
+        <HanziCanvas key={char.id} char={char} darkMode={darkMode} onQuizComplete={handleQuizComplete} />
+
+        {/* Post-quiz navigation */}
+        {quizDone && (
+          <div className="w-full space-y-2 pb-2">
+            {isSequential ? (
+              <button onClick={goNext}
+                className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-semibold shadow-lg shadow-indigo-600/25 transition-colors">
+                {isLast ? '✓ Finish Session' : 'Next Character →'}
+              </button>
+            ) : (
+              <button onClick={onBack}
+                className="w-full py-3 border border-gray-200 dark:border-gray-700 rounded-2xl text-gray-700 dark:text-gray-300 font-medium hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
+                ← Back to Library
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PracticeTab({ data, dispatch, darkMode }) {
+  const [session, setSession] = useState(null);
+
+  if (session) {
+    return (
+      <PracticeSession
+        chars={session}
+        darkMode={darkMode}
+        practiceStats={data.practiceStats}
+        dispatch={dispatch}
+        onBack={() => setSession(null)}
+      />
+    );
+  }
+  return <PracticePicker data={data} onPractice={setSession} />;
+}
+
 // ─── Placeholder Tabs ──────────────────────────────────────────────────────────
 
 function PlaceholderTab({ emoji, name, blurb }) {
@@ -1607,7 +1964,7 @@ function App() {
       <div className="flex-1 overflow-hidden flex flex-col">
         {activeTab === 'library'  && <LibraryTab data={data} dispatch={dispatch} />}
         {activeTab === 'quiz'     && <QuizTab data={data} dispatch={dispatch} />}
-        {activeTab === 'practice' && <PlaceholderTab emoji="✏️" name="Practice" blurb="Stroke-order practice and writing drills to build muscle memory." />}
+        {activeTab === 'practice' && <PracticeTab data={data} dispatch={dispatch} darkMode={darkMode} />}
         {activeTab === 'stats'    && <PlaceholderTab emoji="📊" name="Stats" blurb="Track your daily study streak, quiz accuracy, and progress over time." />}
       </div>
 
